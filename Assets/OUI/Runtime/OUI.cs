@@ -50,6 +50,11 @@ namespace OUI
             _uiRoot = transform;
         }
 
+        public async UniTask ShowUIAsync<T>() where T : BaseWindow
+        {
+            await ShowUIAsync<T>(Array.Empty<object>());
+        }
+
         /// <summary>
         /// 异步打开窗口
         /// </summary>
@@ -134,7 +139,7 @@ namespace OUI
 
                 // 打开窗口
                 window.InternalOpen();
-                window.OnOpen(args ?? new object[0]);
+                window.OnOpen(args);
 
                 OnSetWindowVisible();
             }
@@ -153,7 +158,7 @@ namespace OUI
             Push(window);
             OnSortWindowDepth(window.WindowLayer);
             window.InternalOpen();
-            window.OnOpen(args ?? new object[0]);
+            window.OnOpen(args);
             OnSetWindowVisible();
         }
 
