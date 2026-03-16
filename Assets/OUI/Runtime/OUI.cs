@@ -108,11 +108,15 @@ namespace OUI
                 GameObject prefab = await AssetLoader.LoadAsync(attr.AssetPath);
                 GameObject go = Instantiate(prefab, _uiRoot);
 
-                // 获取BaseWindow组件
+                // 获取或添加BaseWindow组件
                 BaseWindow window = go.GetComponent<BaseWindow>();
                 if (window == null)
                 {
-                    throw new Exception($"Window Prefab {attr.AssetPath} 缺少 BaseWindow 组件");
+                    window = go.AddComponent(type) as BaseWindow;
+                    if (window == null)
+                    {
+                        throw new Exception($"无法为 Window Prefab {attr.AssetPath} 添加 {type.Name} 组件");
+                    }
                 }
 
                 // 初始化窗口
@@ -247,7 +251,7 @@ namespace OUI
         /// <summary>
         /// 关闭所有窗口（隐藏，不销毁）
         /// </summary>
-        public void CloseAll()
+        public void CloseAllWindows()
         {
             for (int i = 0; i < _stack.Count; i++)
             {
@@ -258,6 +262,14 @@ namespace OUI
                 }
             }
             OnSetWindowVisible();
+        }
+
+        /// <summary>
+        /// 获取所有窗口列表（只读）
+        /// </summary>
+        public List<BaseWindow> GetAllWindows()
+        {
+            return new List<BaseWindow>(_stack);
         }
 
         /// <summary>
