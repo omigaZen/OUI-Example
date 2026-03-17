@@ -80,7 +80,6 @@ namespace OUI
             if (existingWindow != null && existingWindow.IsClosed)
             {
                 ReopenWindow(existingWindow, args);
-                existingWindow.OnOpen(args);
                 return;
             }
 
