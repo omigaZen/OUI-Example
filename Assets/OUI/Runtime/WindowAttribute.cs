@@ -2,6 +2,10 @@ using System;
 
 namespace OUI
 {
+    /// <summary>
+    /// 重复打开同一窗口时的处理策略。
+    /// 默认保持兼容：窗口已打开或仍在加载时直接忽略请求。
+    /// </summary>
     public enum WindowDuplicateShowMode
     {
         Return = 0,
@@ -30,7 +34,8 @@ namespace OUI
         public bool HideBelow { get; }
 
         /// <summary>
-        /// 重复打开同一Window时的处理策略
+        /// 重复打开同一Window时的处理策略。
+        /// 只有显式声明 QueueAfterClose 的窗口才会缓存待续开请求。
         /// </summary>
         public WindowDuplicateShowMode DuplicateShowMode { get; set; } = WindowDuplicateShowMode.Return;
 

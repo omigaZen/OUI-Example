@@ -8,6 +8,12 @@ namespace OUI
     ///
     /// 前提条件：UI Camera 的 culling mask 必须包含 WINDOW_SHOW_LAYER（UI层=5），
     /// 且不包含 WINDOW_HIDE_LAYER（Ignore Raycast层=2）
+    ///
+    /// 关键约束：
+    /// 1. Window 的实例生命周期由 OUI 管理，同类型窗口默认只有一个实例。
+    /// 2. Close 的语义固定为 Hide，不会销毁实例；再次打开时复用已有对象。
+    /// 3. BaseWindow.Close() 保持默认关闭行为；若业务需要关闭时丢弃待续开请求，应显式调用
+    ///    OUI.CloseWindow(window, WindowCloseOptions.ClearPendingShow)。
     /// </summary>
     public abstract class BaseWindow : MonoBehaviour
     {
@@ -61,7 +67,8 @@ namespace OUI
         }
 
         /// <summary>
-        /// 内部方法：初始化Canvas引用
+        /// 内部方法：初始化Canvas引用。
+        /// Window 根节点必须具备 Canvas 和 GraphicRaycaster。
         /// </summary>
         internal void InternalInit()
         {
@@ -75,7 +82,8 @@ namespace OUI
         }
 
         /// <summary>
-        /// 内部方法：设置遮挡状态
+        /// 内部方法：设置遮挡状态。
+        /// HideBelow 造成的遮挡与 Close 共用同一套可见性切换机制。
         /// </summary>
         internal void SetHideByAbove(bool hidden)
         {
@@ -97,7 +105,8 @@ namespace OUI
         }
 
         /// <summary>
-        /// 内部方法：关闭窗口
+        /// 内部方法：关闭窗口。
+        /// 这里只切换到隐藏状态，不销毁实例。
         /// </summary>
         internal void InternalClose()
         {
@@ -134,7 +143,8 @@ namespace OUI
         }
 
         /// <summary>
-        /// 关闭自身的便捷方法（隐藏，不销毁）
+        /// 关闭自身的便捷方法（隐藏，不销毁）。
+        /// 此方法等价于默认 CloseWindow，不会清理同类型已排队的待续开请求。
         /// </summary>
         public void Close()
         {

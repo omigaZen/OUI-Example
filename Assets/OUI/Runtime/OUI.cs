@@ -5,6 +5,10 @@ using UnityEngine;
 
 namespace OUI
 {
+    /// <summary>
+    /// 关闭窗口时的附加策略。
+    /// 默认只隐藏窗口；若明确指定 ClearPendingShow，则会一并丢弃该类型排队中的待续开请求。
+    /// </summary>
     public enum WindowCloseOptions
     {
         None = 0,
@@ -12,7 +16,12 @@ namespace OUI
     }
 
     /// <summary>
-    /// OUI UI管理系统
+    /// OUI UI管理系统。
+    /// 关键约束：
+    /// 1. 同一Window类型始终只有一个实例。
+    /// 2. Close 的语义固定为 Hide，重新打开时复用实例。
+    /// 3. 仅显式配置 QueueAfterClose 的窗口会缓存重复打开请求。
+    /// 4. CloseAllWindows / DestroyAll 都会清空排队中的待续开请求，避免批量操作后再次自动弹窗。
     /// </summary>
     public class OUI : MonoBehaviour
     {
@@ -42,8 +51,10 @@ namespace OUI
         private Transform _uiRoot;
         private readonly List<BaseWindow> _stack = new List<BaseWindow>();
         private readonly HashSet<Type> _loadingWindows = new HashSet<Type>();
+        // 仅用于 QueueAfterClose。队列按窗口类型分别维护，按 FIFO 消费。
         private readonly Dictionary<Type, Queue<object[]>> _pendingShowQueues = new Dictionary<Type, Queue<object[]>>();
         private readonly Dictionary<Type, WindowAttribute> _windowAttributeCache = new Dictionary<Type, WindowAttribute>();
+        // 批量关闭/销毁期间关闭窗口时，不允许顺手触发自动续开。
         private bool _suppressQueuedShowDrain;
 
         private void Awake()
@@ -74,7 +85,8 @@ namespace OUI
         }
 
         /// <summary>
-        /// 内部统一的打开入口，支持按Type处理自动续开。
+        /// 内部统一的打开入口。
+        /// 已打开 / 加载中的窗口会按 DuplicateShowMode 决定是忽略请求还是进入待续开队列。
         /// </summary>
         private async UniTask ShowUIAsync(Type type, object[] args)
         {
@@ -105,7 +117,8 @@ namespace OUI
         }
 
         /// <summary>
-        /// 加载并创建窗口
+        /// 加载并创建窗口。
+        /// 若加载或初始化失败，会清空该类型尚未消费的待续开队列，避免错误请求持续积压。
         /// </summary>
         private async UniTask LoadAndCreateWindow(Type type, WindowAttribute attr, object[] args)
         {
@@ -184,7 +197,8 @@ namespace OUI
         }
 
         /// <summary>
-        /// 重新打开已存在的窗口
+        /// 重新打开已存在但已关闭的窗口。
+        /// 这里不会重新加载资源，也不会重新执行 BindUI / Init。
         /// </summary>
         private void ReopenWindow(BaseWindow window, object[] args)
         {
@@ -312,7 +326,8 @@ namespace OUI
         }
 
         /// <summary>
-        /// 关闭所有窗口（隐藏，不销毁）
+        /// 关闭所有窗口（隐藏，不销毁）。
+        /// 批量关闭完成后会清空所有待续开队列，保证调用结束后不会再次自动弹窗。
         /// </summary>
         public void CloseAllWindows()
         {
@@ -349,7 +364,8 @@ namespace OUI
         }
 
         /// <summary>
-        /// 销毁所有窗口（真正销毁）
+        /// 销毁所有窗口（真正销毁）。
+        /// 销毁优先级高于排队续开，因此会先清空所有待续开请求。
         /// </summary>
         public void DestroyAll()
         {
@@ -474,6 +490,10 @@ namespace OUI
             }
         }
 
+        /// <summary>
+        /// 统一关闭入口。
+        /// 默认关闭后会尝试消费当前类型的待续开队列；ClearPendingShow 会先清空该队列并跳过本次自动续开。
+        /// </summary>
         private void CloseWindowInternal(BaseWindow window, WindowCloseOptions options)
         {
             Type windowType = window.GetType();
@@ -499,6 +519,9 @@ namespace OUI
             }
         }
 
+        /// <summary>
+        /// 已打开或加载中的窗口再次收到 Show 请求时的处理。
+        /// </summary>
         private void HandleDuplicateShow(Type type, WindowAttribute attr, object[] args)
         {
             if (attr.DuplicateShowMode != WindowDuplicateShowMode.QueueAfterClose)
@@ -509,6 +532,9 @@ namespace OUI
             EnqueuePendingShow(type, args);
         }
 
+        /// <summary>
+        /// 关闭后尝试自动续开当前类型的下一个排队请求。
+        /// </summary>
         private void TryShowNextPendingWindow(Type type)
         {
             if (_suppressQueuedShowDrain)
@@ -591,6 +617,10 @@ namespace OUI
             return windowAttribute;
         }
 
+        /// <summary>
+        /// 仅复制 object[] 本身，避免外部复用同一数组时污染队列中的快照。
+        /// 数组元素保持引用语义，不做深拷贝。
+        /// </summary>
         private static object[] SnapshotArgs(object[] args)
         {
             if (args == null || args.Length == 0)
