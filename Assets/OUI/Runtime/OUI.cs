@@ -36,6 +36,9 @@ namespace OUI
         private Transform _uiRoot;
         private readonly List<BaseWindow> _stack = new List<BaseWindow>();
         private readonly HashSet<Type> _loadingWindows = new HashSet<Type>();
+        private readonly Dictionary<Type, Queue<object[]>> _pendingShowQueues = new Dictionary<Type, Queue<object[]>>();
+        private readonly Dictionary<Type, WindowAttribute> _windowAttributeCache = new Dictionary<Type, WindowAttribute>();
+        private bool _suppressQueuedShowDrain;
 
         private void Awake()
         {
@@ -52,7 +55,7 @@ namespace OUI
 
         public async UniTask ShowUIAsync<T>() where T : BaseWindow
         {
-            await ShowUIAsync<T>(Array.Empty<object>());
+            await ShowUIAsync(typeof(T), Array.Empty<object>());
         }
 
         /// <summary>
@@ -61,86 +64,112 @@ namespace OUI
         /// <param name="args">传递给OnOpen的可变参数</param>
         public async UniTask ShowUIAsync<T>(params object[] args) where T : BaseWindow
         {
-            Type type = typeof(T);
+            await ShowUIAsync(typeof(T), args);
+        }
 
-            // 检查窗口是否已打开
-            BaseWindow existingWindow = GetWindow<T>();
-            if (existingWindow != null && !existingWindow.IsClosed)
+        /// <summary>
+        /// 内部统一的打开入口，支持按Type处理自动续开。
+        /// </summary>
+        private async UniTask ShowUIAsync(Type type, object[] args)
+        {
+            WindowAttribute attr = GetWindowAttribute(type);
+            object[] argsSnapshot = SnapshotArgs(args);
+            BaseWindow existingWindow = GetWindow(type);
+
+            if (existingWindow != null)
             {
+                if (existingWindow.IsClosed)
+                {
+                    ReopenWindow(existingWindow, argsSnapshot);
+                }
+                else
+                {
+                    HandleDuplicateShow(type, attr, argsSnapshot);
+                }
                 return;
             }
 
-            // 检查是否正在加载中
             if (_loadingWindows.Contains(type))
             {
+                HandleDuplicateShow(type, attr, argsSnapshot);
                 return;
             }
 
-            // 窗口已存在但已关闭，重新打开
-            if (existingWindow != null && existingWindow.IsClosed)
-            {
-                ReopenWindow(existingWindow, args);
-                return;
-            }
-
-            // 首次打开，加载资源
-            await LoadAndCreateWindow<T>(type, args);
+            await LoadAndCreateWindow(type, attr, argsSnapshot);
         }
 
         /// <summary>
         /// 加载并创建窗口
         /// </summary>
-        private async UniTask LoadAndCreateWindow<T>(Type type, object[] args) where T : BaseWindow
+        private async UniTask LoadAndCreateWindow(Type type, WindowAttribute attr, object[] args)
         {
+            GameObject instance = null;
+            BaseWindow window = null;
+            bool addedToStack = false;
+
             _loadingWindows.Add(type);
 
             try
             {
-                // 读取WindowAttribute
-                WindowAttribute attr = type.GetCustomAttributes(typeof(WindowAttribute), false)[0] as WindowAttribute;
-                if (attr == null)
-                {
-                    throw new Exception($"Window {type.Name} 缺少 [WindowAttribute]");
-                }
-
                 if (AssetLoader == null)
                 {
                     throw new Exception("OUI.AssetLoader 未设置");
                 }
 
-                // 加载资源
                 GameObject prefab = await AssetLoader.LoadAsync(attr.AssetPath);
-                GameObject go = Instantiate(prefab, _uiRoot);
+                if (prefab == null)
+                {
+                    throw new Exception($"Window {type.Name} 加载到的 Prefab 为空: {attr.AssetPath}");
+                }
 
-                // 获取或添加BaseWindow组件
-                BaseWindow window = go.GetComponent<BaseWindow>();
+                instance = Instantiate(prefab, _uiRoot);
+
+                window = instance.GetComponent<BaseWindow>();
                 if (window == null)
                 {
-                    window = go.AddComponent(type) as BaseWindow;
+                    window = instance.AddComponent(type) as BaseWindow;
                     if (window == null)
                     {
                         throw new Exception($"无法为 Window Prefab {attr.AssetPath} 添加 {type.Name} 组件");
                     }
                 }
 
-                // 初始化窗口
                 window.WindowLayer = attr.Layer;
                 window.HideBelow = attr.HideBelow;
                 window.InternalInit();
 
-                // 加入栈
                 Push(window);
+                addedToStack = true;
                 OnSortWindowDepth(attr.Layer);
 
-                // 生命周期回调
                 window.BindUI();
                 window.Init();
-
-                // 打开窗口
                 window.InternalOpen();
                 window.OnOpen(args);
 
                 OnSetWindowVisible();
+            }
+            catch (Exception ex)
+            {
+                if (addedToStack && window != null)
+                {
+                    Pop(window);
+                    OnSortWindowDepth(attr.Layer);
+                    OnSetWindowVisible();
+                }
+
+                if (instance != null)
+                {
+                    if (AssetLoader != null)
+                    {
+                        AssetLoader.Unload(instance);
+                    }
+                    Destroy(instance);
+                }
+
+                ClearPendingShows(type);
+                Debug.LogError($"[OUI] 打开窗口 {type.Name} 失败，已清空待打开队列。\n{ex}");
+                throw;
             }
             finally
             {
@@ -180,9 +209,7 @@ namespace OUI
                 throw new Exception($"Window {type.Name} 不存在");
             }
 
-            window.OnClose();
-            window.InternalClose();
-            OnSetWindowVisible();
+            CloseWindowInternal(window, true);
         }
 
         /// <summary>
@@ -204,29 +231,37 @@ namespace OUI
                 throw new Exception($"Window {type.Name} 不存在");
             }
 
-            // 如果未关闭，先关闭
-            if (!window.IsClosed)
+            ClearPendingShows(type);
+
+            bool previousSuppress = _suppressQueuedShowDrain;
+            _suppressQueuedShowDrain = true;
+
+            try
             {
-                window.OnClose();
-                window.InternalClose();
+                WindowLayer layer = window.WindowLayer;
+
+                if (!window.IsClosed)
+                {
+                    window.OnClose();
+                    window.InternalClose();
+                }
+
+                window.Release();
+                Pop(window);
+
+                if (AssetLoader != null)
+                {
+                    AssetLoader.Unload(window.gameObject);
+                }
+                Destroy(window.gameObject);
+
+                OnSortWindowDepth(layer);
+                OnSetWindowVisible();
             }
-
-            // 释放资源
-            window.Release();
-
-            // 从栈中移除
-            WindowLayer layer = window.WindowLayer;
-            Pop(window);
-
-            // 销毁GameObject
-            if (AssetLoader != null)
+            finally
             {
-                AssetLoader.Unload(window.gameObject);
+                _suppressQueuedShowDrain = previousSuppress;
             }
-            Destroy(window.gameObject);
-
-            OnSortWindowDepth(layer);
-            OnSetWindowVisible();
         }
 
         /// <summary>
@@ -257,15 +292,28 @@ namespace OUI
         /// </summary>
         public void CloseAllWindows()
         {
-            for (int i = 0; i < _stack.Count; i++)
+            bool previousSuppress = _suppressQueuedShowDrain;
+            _suppressQueuedShowDrain = true;
+
+            try
             {
-                if (!_stack[i].IsClosed)
+                for (int i = 0; i < _stack.Count; i++)
                 {
-                    _stack[i].OnClose();
-                    _stack[i].InternalClose();
+                    if (!_stack[i].IsClosed)
+                    {
+                        _stack[i].OnClose();
+                        _stack[i].InternalClose();
+                    }
                 }
+
+                // 批量关闭后视为取消所有待续开的请求，避免出现旧请求延后自动弹出。
+                ClearAllPendingShows();
+                OnSetWindowVisible();
             }
-            OnSetWindowVisible();
+            finally
+            {
+                _suppressQueuedShowDrain = previousSuppress;
+            }
         }
 
         /// <summary>
@@ -281,29 +329,38 @@ namespace OUI
         /// </summary>
         public void DestroyAll()
         {
-            for (int i = _stack.Count - 1; i >= 0; i--)
+            bool previousSuppress = _suppressQueuedShowDrain;
+            _suppressQueuedShowDrain = true;
+
+            try
             {
-                BaseWindow window = _stack[i];
+                ClearAllPendingShows();
 
-                // 如果未关闭，先关闭
-                if (!window.IsClosed)
+                for (int i = _stack.Count - 1; i >= 0; i--)
                 {
-                    window.OnClose();
-                    window.InternalClose();
+                    BaseWindow window = _stack[i];
+
+                    if (!window.IsClosed)
+                    {
+                        window.OnClose();
+                        window.InternalClose();
+                    }
+
+                    window.Release();
+
+                    if (AssetLoader != null)
+                    {
+                        AssetLoader.Unload(window.gameObject);
+                    }
+                    Destroy(window.gameObject);
                 }
 
-                // 释放资源
-                window.Release();
-
-                // 销毁GameObject
-                if (AssetLoader != null)
-                {
-                    AssetLoader.Unload(window.gameObject);
-                }
-                Destroy(window.gameObject);
+                _stack.Clear();
             }
-
-            _stack.Clear();
+            finally
+            {
+                _suppressQueuedShowDrain = previousSuppress;
+            }
         }
 
         /// <summary>
@@ -313,26 +370,29 @@ namespace OUI
         {
             int insertIndex = -1;
 
-            // 找到同Layer的最后一个窗口，插入其后面
             for (int i = 0; i < _stack.Count; i++)
             {
                 if (window.WindowLayer == _stack[i].WindowLayer)
+                {
                     insertIndex = i + 1;
+                }
             }
 
-            // 如果该Layer没有窗口，找相邻的更低Layer的最后一个窗口，插入其后面
             if (insertIndex == -1)
             {
                 for (int i = 0; i < _stack.Count; i++)
                 {
                     if (window.WindowLayer > _stack[i].WindowLayer)
+                    {
                         insertIndex = i + 1;
+                    }
                 }
             }
 
-            // 栈为空或该Layer最低，插入到索引0
             if (insertIndex == -1)
+            {
                 insertIndex = 0;
+            }
 
             _stack.Insert(insertIndex, window);
         }
@@ -369,20 +429,146 @@ namespace OUI
             bool isHideNext = false;
             for (int i = _stack.Count - 1; i >= 0; i--)
             {
-                var window = _stack[i];
-                if (window.IsClosed) continue;
+                BaseWindow window = _stack[i];
+                if (window.IsClosed)
+                {
+                    continue;
+                }
 
                 if (!isHideNext)
                 {
                     window.SetHideByAbove(false);
                     if (window.HideBelow)
+                    {
                         isHideNext = true;
+                    }
                 }
                 else
                 {
                     window.SetHideByAbove(true);
                 }
             }
+        }
+
+        private void CloseWindowInternal(BaseWindow window, bool triggerQueuedShow)
+        {
+            if (window.IsClosed)
+            {
+                return;
+            }
+
+            window.OnClose();
+            window.InternalClose();
+            OnSetWindowVisible();
+
+            if (triggerQueuedShow)
+            {
+                TryShowNextPendingWindow(window.GetType());
+            }
+        }
+
+        private void HandleDuplicateShow(Type type, WindowAttribute attr, object[] args)
+        {
+            if (attr.DuplicateShowMode != WindowDuplicateShowMode.QueueAfterClose)
+            {
+                return;
+            }
+
+            EnqueuePendingShow(type, args);
+        }
+
+        private void TryShowNextPendingWindow(Type type)
+        {
+            if (_suppressQueuedShowDrain)
+            {
+                return;
+            }
+
+            if (!TryDequeuePendingShow(type, out object[] nextArgs))
+            {
+                return;
+            }
+
+            ContinuePendingShowAsync(type, nextArgs).Forget();
+        }
+
+        private async UniTask ContinuePendingShowAsync(Type type, object[] args)
+        {
+            try
+            {
+                await ShowUIAsync(type, args);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[OUI] 自动续开窗口 {type.Name} 失败。\n{ex}");
+            }
+        }
+
+        private void EnqueuePendingShow(Type type, object[] args)
+        {
+            if (!_pendingShowQueues.TryGetValue(type, out Queue<object[]> queue))
+            {
+                queue = new Queue<object[]>();
+                _pendingShowQueues[type] = queue;
+            }
+
+            queue.Enqueue(args);
+        }
+
+        private bool TryDequeuePendingShow(Type type, out object[] args)
+        {
+            args = null;
+            if (!_pendingShowQueues.TryGetValue(type, out Queue<object[]> queue) || queue.Count == 0)
+            {
+                return false;
+            }
+
+            args = queue.Dequeue();
+            if (queue.Count == 0)
+            {
+                _pendingShowQueues.Remove(type);
+            }
+
+            return true;
+        }
+
+        private void ClearPendingShows(Type type)
+        {
+            _pendingShowQueues.Remove(type);
+        }
+
+        private void ClearAllPendingShows()
+        {
+            _pendingShowQueues.Clear();
+        }
+
+        private WindowAttribute GetWindowAttribute(Type type)
+        {
+            if (_windowAttributeCache.TryGetValue(type, out WindowAttribute attr))
+            {
+                return attr;
+            }
+
+            object[] attributes = type.GetCustomAttributes(typeof(WindowAttribute), false);
+            if (attributes.Length == 0 || !(attributes[0] is WindowAttribute windowAttribute))
+            {
+                throw new Exception($"Window {type.Name} 缺少 [WindowAttribute]");
+            }
+
+            _windowAttributeCache[type] = windowAttribute;
+            return windowAttribute;
+        }
+
+        private static object[] SnapshotArgs(object[] args)
+        {
+            if (args == null || args.Length == 0)
+            {
+                return Array.Empty<object>();
+            }
+
+            object[] snapshot = new object[args.Length];
+            Array.Copy(args, snapshot, args.Length);
+            return snapshot;
         }
     }
 }

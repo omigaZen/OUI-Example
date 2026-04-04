@@ -43,6 +43,8 @@ namespace OUI.Example
         public Button openSystemBtn;
         public Button openTipsBtn;
 
+        private int _tipsMessageIndex;
+
 #if UNITY_EDITOR
         private void Start()
         {
@@ -60,7 +62,7 @@ namespace OUI.Example
                 openSystemBtn.onClick.AddListener(() => OUI.Instance.ShowUIAsync<TestSystemWindow>().Forget());
 
             if (openTipsBtn != null)
-                openTipsBtn.onClick.AddListener(() => OUI.Instance.ShowUIAsync<TestTipsWindow>("快速提示").Forget());
+                openTipsBtn.onClick.AddListener(OpenQueuedTipsWindow);
 
             Debug.Log("[TestLauncher] OUI 初始化完成");
         }
@@ -76,6 +78,12 @@ namespace OUI.Example
                 openSystemBtn.onClick.RemoveAllListeners();
             if (openTipsBtn != null)
                 openTipsBtn.onClick.RemoveAllListeners();
+        }
+
+        private void OpenQueuedTipsWindow()
+        {
+            _tipsMessageIndex++;
+            OUI.Instance.ShowUIAsync<TestTipsWindow>($"快速提示 #{_tipsMessageIndex}").Forget();
         }
     }
 }

@@ -4,9 +4,9 @@ using UnityEngine.UI;
 namespace OUI.Example
 {
     /// <summary>
-    /// 测试提示窗口 - 演示Tips层级和不遮挡下层（hideBelow: false）
+    /// 测试提示窗口 - 演示Tips层级、非遮挡窗口和重复打开排队
     /// </summary>
-    [Window("Assets/Example/Prefabs/TestTipsWindow.prefab", WindowLayer.Tips, hideBelow: false)]
+    [Window("Assets/Example/Prefabs/TestTipsWindow.prefab", WindowLayer.Tips, hideBelow: false, DuplicateShowMode = WindowDuplicateShowMode.QueueAfterClose)]
     public class TestTipsWindow : BaseWindow
     {
         private Text _messageText;

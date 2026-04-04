@@ -36,10 +36,12 @@
 #### TestTipsWindow (Tips层)
 - **层级**: WindowLayer.Tips
 - **HideBelow**: false
+- **DuplicateShowMode**: QueueAfterClose
 - **功能点**:
   - 高层级窗口
   - 自动关闭 (3秒)
   - 不遮挡下层窗口
+  - 重复打开时按 FIFO 排队续开
 
 #### TestTopWindow (Top层)
 - **层级**: WindowLayer.Top
@@ -61,6 +63,7 @@
 - 初始化 OUI 系统
 - 注入 EditorWindowAssetLoader
 - 提供测试按钮快速打开各个窗口
+- 连续点击 Tips 按钮可验证排队打开行为
 
 ## 覆盖的 OUI 功能点
 
@@ -72,7 +75,7 @@
 6. ✅ OnHideByAboveChanged 回调
 7. ✅ 窗口深度自动排序
 8. ✅ 子Canvas深度管理
-9. ✅ 窗口重复打开检测
+9. ✅ 窗口重复打开策略 (Return / QueueAfterClose)
 10. ✅ 关闭窗口/关闭所有窗口
 11. ✅ 获取窗口栈信息
 
@@ -86,6 +89,7 @@
    - 所需的 UI 子节点 (按照 FindChild/FindChildComponent 的路径)
 3. 在场景中添加 TestLauncher 脚本并绑定按钮
 4. 运行场景测试
+5. 连续快速点击 Tips 按钮，确认提示窗口会按顺序逐个显示，而不是丢弃后续请求
 
 ## Prefab 结构参考
 

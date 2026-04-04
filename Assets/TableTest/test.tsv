@@ -1,0 +1,5 @@
+﻿##var	id:int	name:string	hp:int	skills:int[]
+##desc	ID	名称	生命值	技能列表
+##tag	all	all	all	all
+1	warrior	1000	1,2,3	
+2	mage	800	4,5,6	
