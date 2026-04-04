@@ -138,7 +138,7 @@ namespace OUI
         /// </summary>
         public void Close()
         {
-            OUI.Instance.CloseWindow(GetType());
+            OUI.Instance.CloseWindow(this);
         }
 
         /// <summary>

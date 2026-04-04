@@ -5,6 +5,12 @@ using UnityEngine;
 
 namespace OUI
 {
+    public enum WindowCloseOptions
+    {
+        None = 0,
+        ClearPendingShow = 1
+    }
+
     /// <summary>
     /// OUI UI管理系统
     /// </summary>
@@ -193,15 +199,15 @@ namespace OUI
         /// <summary>
         /// 关闭指定类型的窗口
         /// </summary>
-        public void CloseWindow<T>() where T : BaseWindow
+        public void CloseWindow<T>(WindowCloseOptions options = WindowCloseOptions.None) where T : BaseWindow
         {
-            CloseWindow(typeof(T));
+            CloseWindow(typeof(T), options);
         }
 
         /// <summary>
         /// 关闭指定类型的窗口
         /// </summary>
-        public void CloseWindow(Type type)
+        public void CloseWindow(Type type, WindowCloseOptions options = WindowCloseOptions.None)
         {
             BaseWindow window = GetWindow(type);
             if (window == null)
@@ -209,7 +215,25 @@ namespace OUI
                 throw new Exception($"Window {type.Name} 不存在");
             }
 
-            CloseWindowInternal(window, true);
+            CloseWindowInternal(window, options);
+        }
+
+        /// <summary>
+        /// 关闭指定窗口实例
+        /// </summary>
+        public void CloseWindow(BaseWindow window, WindowCloseOptions options = WindowCloseOptions.None)
+        {
+            if (window == null)
+            {
+                throw new ArgumentNullException(nameof(window));
+            }
+
+            if (!_stack.Contains(window))
+            {
+                throw new Exception($"Window {window.GetType().Name} 不存在");
+            }
+
+            CloseWindowInternal(window, options);
         }
 
         /// <summary>
@@ -450,8 +474,16 @@ namespace OUI
             }
         }
 
-        private void CloseWindowInternal(BaseWindow window, bool triggerQueuedShow)
+        private void CloseWindowInternal(BaseWindow window, WindowCloseOptions options)
         {
+            Type windowType = window.GetType();
+            bool clearPendingShow = options == WindowCloseOptions.ClearPendingShow;
+
+            if (clearPendingShow)
+            {
+                ClearPendingShows(windowType);
+            }
+
             if (window.IsClosed)
             {
                 return;
@@ -461,9 +493,9 @@ namespace OUI
             window.InternalClose();
             OnSetWindowVisible();
 
-            if (triggerQueuedShow)
+            if (!clearPendingShow)
             {
-                TryShowNextPendingWindow(window.GetType());
+                TryShowNextPendingWindow(windowType);
             }
         }
 
